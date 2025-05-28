@@ -1,0 +1,252 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  SUPER_ADMIN
+  TEAM_LEAD
+  TEAM_MEMBER
+  EXTERNAL_PARTNER
+}
+
+enum ProjectStatus {
+  PLANNING
+  ACTIVE
+  ON_HOLD
+  COMPLETED
+  CANCELLED
+}
+
+enum ProjectPriority {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum TaskStatus {
+  TO_DO
+  IN_PROGRESS
+  REVIEW
+  DONE
+}
+
+enum TaskPriority {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+enum PermissionLevel {
+  READ
+  WRITE
+  DELETE
+  ADMIN
+}
+
+model User {
+  id            String    @id @default(uuid())
+  firebaseUid   String    @unique
+  email         String    @unique
+  name          String
+  role          UserRole
+  department    String?
+  timezone      String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  // Relationships
+  createdProjects Project[] @relation("ProjectCreator")
+  tasks           Task[]    @relation("TaskAssignee")
+  createdTasks    Task[]    @relation("TaskCreator")
+  comments        Comment[]
+  permissions     UserPermission[]
+  notifications   Notification[]
+  fileUploads     FileAttachment[] @relation("FileUploader")
+  integrationTokens IntegrationToken[]
+
+  @@index([email])
+}
+
+model Project {
+  id          String          @id @default(uuid())
+  name        String
+  description String?
+  status      ProjectStatus
+  priority    ProjectPriority
+  startDate   DateTime
+  endDate     DateTime
+  createdBy   String
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  // Relationships
+  creator     User            @relation("ProjectCreator", fields: [createdBy], references: [id])
+  tasks       Task[]
+  permissions UserPermission[] @relation("ProjectPermissions")
+
+  @@index([createdBy])
+  @@index([status])
+}
+
+model Task {
+  id          String       @id @default(uuid())
+  projectId   String
+  title       String
+  description String?
+  status      TaskStatus
+  priority    TaskPriority
+  assigneeId  String?
+  dueDate     DateTime?
+  createdBy   String
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  // Relationships
+  project     Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  assignee    User?        @relation("TaskAssignee", fields: [assigneeId], references: [id])
+  creator     User         @relation("TaskCreator", fields: [createdBy], references: [id])
+  comments    Comment[]
+  attachments FileAttachment[]
+  dependencies TaskDependency[] @relation("DependentTask")
+  dependents  TaskDependency[] @relation("ParentTask")
+
+  @@index([projectId])
+  @@index([assigneeId])
+  @@index([status])
+}
+
+model TaskDependency {
+  id           String   @id @default(uuid())
+  taskId       String
+  dependsOnId  String
+  createdAt    DateTime @default(now())
+
+  // Relationships
+  task         Task     @relation("DependentTask", fields: [taskId], references: [id], onDelete: Cascade)
+  dependsOn    Task     @relation("ParentTask", fields: [dependsOnId], references: [id], onDelete: Cascade)
+
+  @@unique([taskId, dependsOnId])
+  @@index([taskId])
+  @@index([dependsOnId])
+}
+
+model Comment {
+  id        String   @id @default(uuid())
+  taskId    String
+  userId    String
+  content   String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relationships
+  task      Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id])
+  mentions  CommentMention[]
+
+  @@index([taskId])
+  @@index([userId])
+}
+
+model CommentMention {
+  id        String   @id @default(uuid())
+  commentId String
+  userId    String
+  createdAt DateTime @default(now())
+
+  // Relationships
+  comment   Comment  @relation(fields: [commentId], references: [id], onDelete: Cascade)
+
+  @@unique([commentId, userId])
+  @@index([commentId])
+}
+
+model Notification {
+  id          String   @id @default(uuid())
+  userId      String
+  type        String
+  content     String
+  isRead      Boolean  @default(false)
+  resourceId  String?
+  resourceType String?
+  createdAt   DateTime @default(now())
+
+  // Relationships
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([isRead])
+}
+
+model Workflow {
+  id         String   @id @default(uuid())
+  name       String
+  teamType   String
+  stages     Json     // Array of stage objects
+  isTemplate Boolean  @default(false)
+  createdBy  String
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([isTemplate])
+}
+
+model UserPermission {
+  id             String         @id @default(uuid())
+  userId         String
+  resourceType   String         // 'PROJECT', 'TASK', etc.
+  resourceId     String
+  permissionLevel PermissionLevel
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  // Relationships
+  user           User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  project        Project?       @relation("ProjectPermissions", fields: [resourceId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, resourceType, resourceId])
+  @@index([userId])
+  @@index([resourceId])
+}
+
+model FileAttachment {
+  id               String   @id @default(uuid())
+  taskId           String
+  googleDriveFileId String
+  filename         String
+  uploadedById     String
+  uploadedAt       DateTime @default(now())
+
+  // Relationships
+  task             Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  uploadedBy       User     @relation("FileUploader", fields: [uploadedById], references: [id])
+
+  @@index([taskId])
+  @@index([uploadedById])
+}
+
+model IntegrationToken {
+  id             String   @id @default(uuid())
+  userId         String
+  serviceName    String   // 'GOOGLE_CALENDAR', 'GOOGLE_DRIVE', etc.
+  encryptedToken String
+  refreshToken   String?
+  expiresAt      DateTime
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  // Relationships
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, serviceName])
+  @@index([userId])
+  @@index([serviceName])
+} 
